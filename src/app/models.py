@@ -1,3 +1,4 @@
+from typing import Optional, List
 from pydantic import BaseModel
 
 
@@ -21,3 +22,6 @@ class QAResponse(BaseModel):
 
     answer: str
     context: str
+    draft_answer: Optional[str] = None
+    retrieval_traces: Optional[str] = None
+    raw_context_blocks: Optional[List[str]] = None

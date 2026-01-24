@@ -1,8 +1,4 @@
-"""Agent implementations for the multi-agent RAG flow.
-
-This module defines three LangChain agents (Retrieval, Summarization,
-Verification) and thin node functions that LangGraph uses to invoke them.
-"""
+"""Agent implementations for the multi-agent RAG flow."""
 
 from typing import List
 
@@ -20,14 +16,17 @@ from .tools import retrieval_tool
 
 
 def _extract_last_ai_content(messages: List[object]) -> str:
-    """Extract the content of the last AIMessage in a messages list."""
+    """Extract the content of the last AIMessage."""
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
             return str(msg.content)
     return ""
 
 
-# Define agents at module level for reuse
+# =========================
+# AGENT DEFINITIONS
+# =========================
+
 retrieval_agent = create_agent(
     model=create_chat_model(),
     tools=[retrieval_tool],
@@ -47,70 +46,76 @@ verification_agent = create_agent(
 )
 
 
-def retrieval_node(state: QAState) -> QAState:
-    """Retrieval Agent node: gathers context from vector store.
+# =========================
+# FEATURE 2: ENHANCED RETRIEVAL NODE
+# =========================
 
-    This node:
-    - Sends the user's question to the Retrieval Agent.
-    - The agent uses the attached retrieval tool to fetch document chunks.
-    - Extracts the tool's content (CONTEXT string) from the ToolMessage.
-    - Stores the consolidated context string in `state["context"]`.
-    """
+def retrieval_node(state: QAState) -> QAState:
     question = state["question"]
 
-    result = retrieval_agent.invoke({"messages": [HumanMessage(content=question)]})
+    result = retrieval_agent.invoke(
+        {"messages": [HumanMessage(content=question)]}
+    )
 
     messages = result.get("messages", [])
-    context = ""
+    tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+    ai_messages = [m for m in messages if isinstance(m, AIMessage)]
 
-    # Prefer the last ToolMessage content (from retrieval_tool)
-    for msg in reversed(messages):
-        if isinstance(msg, ToolMessage):
-            context = str(msg.content)
-            break
+    raw_context_blocks: List[str] = []
+    retrieval_logs: List[str] = []
+
+    for i, tool_msg in enumerate(tool_messages):
+        query_used = "Unknown Query"
+
+        # try to match tool call with AIMessage
+        if i < len(ai_messages):
+            tool_calls = getattr(ai_messages[i], "tool_calls", None)
+            if tool_calls:
+                query_used = tool_calls[0].get("args", {}).get("query", "Unknown")
+
+        context_block = str(tool_msg.content)
+        raw_context_blocks.append(context_block)
+
+        retrieval_logs.append(
+            f"Retrieval Call {i + 1}\n"
+            f"Query: {query_used}\n"
+            f"Context Length: {len(context_block)} characters"
+        )
+
+    structured_context = ""
+    for i, block in enumerate(raw_context_blocks):
+        structured_context += f"\n=== RETRIEVAL CALL {i + 1} ===\n{block}\n"
 
     return {
-        "context": context,
+        "context": structured_context.strip(),
+        "raw_context_blocks": raw_context_blocks,
+        "retrieval_traces": "\n\n".join(retrieval_logs),
     }
 
 
 def summarization_node(state: QAState) -> QAState:
-    """Summarization Agent node: generates draft answer from context.
-
-    This node:
-    - Sends question + context to the Summarization Agent.
-    - Agent responds with a draft answer grounded only in the context.
-    - Stores the draft answer in `state["draft_answer"]`.
-    """
     question = state["question"]
-    context = state.get("context")
+    context = state.get("context", "")
 
-    user_content = f"Question: {question}\n\nContext:\n{context}"
+    user_content = f"Question:\n{question}\n\nContext:\n{context}"
 
     result = summarization_agent.invoke(
         {"messages": [HumanMessage(content=user_content)]}
     )
-    messages = result.get("messages", [])
-    draft_answer = _extract_last_ai_content(messages)
 
-    return {
-        "draft_answer": draft_answer,
-    }
+    draft_answer = _extract_last_ai_content(result.get("messages", []))
+
+    return {"draft_answer": draft_answer}
 
 
 def verification_node(state: QAState) -> QAState:
-    """Verification Agent node: verifies and corrects the draft answer.
-
-    This node:
-    - Sends question + context + draft_answer to the Verification Agent.
-    - Agent checks for hallucinations and unsupported claims.
-    - Stores the final verified answer in `state["answer"]`.
-    """
     question = state["question"]
     context = state.get("context", "")
     draft_answer = state.get("draft_answer", "")
 
-    user_content = f"""Question: {question}
+    user_content = f"""
+Question:
+{question}
 
 Context:
 {context}
@@ -118,14 +123,13 @@ Context:
 Draft Answer:
 {draft_answer}
 
-Please verify and correct the draft answer, removing any unsupported claims."""
+Verify the answer strictly against the context.
+"""
 
     result = verification_agent.invoke(
         {"messages": [HumanMessage(content=user_content)]}
     )
-    messages = result.get("messages", [])
-    answer = _extract_last_ai_content(messages)
 
-    return {
-        "answer": answer,
-    }
+    answer = _extract_last_ai_content(result.get("messages", []))
+
+    return {"answer": answer}

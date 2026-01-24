@@ -1,6 +1,5 @@
 """Vector store wrapper for Pinecone integration with LangChain."""
 
-from pathlib import Path
 from functools import lru_cache
 from typing import List
 
@@ -8,20 +7,22 @@ from pinecone import Pinecone
 from langchain_core.documents import Document
 from langchain_pinecone import PineconeVectorStore
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 
 from ..config import get_settings
 
 
 @lru_cache(maxsize=1)
 def _get_vector_store() -> PineconeVectorStore:
-    """Create a PineconeVectorStore instance configured from settings."""
+    """Create and cache a PineconeVectorStore instance."""
     settings = get_settings()
 
     pc = Pinecone(api_key=settings.pinecone_api_key)
-    index = pc.Index(settings.pinecone_index_name)
+    
+    index = pc.Index(
+        name=settings.pinecone_index_name,
+        host=settings.pinecone_host,   # 👈 THIS IS THE NEW LINE
+    )
 
     embeddings = OpenAIEmbeddings(
         model=settings.openai_embedding_model_name,
@@ -33,15 +34,9 @@ def _get_vector_store() -> PineconeVectorStore:
         embedding=embeddings,
     )
 
+
 def get_retriever(k: int | None = None):
-    """Get a Pinecone retriever instance.
-
-    Args:
-        k: Number of documents to retrieve (defaults to config value).
-
-    Returns:
-        PineconeVectorStore instance configured as a retriever.
-    """
+    """Get a retriever for querying the vector store."""
     settings = get_settings()
     if k is None:
         k = settings.retrieval_k
@@ -51,33 +46,29 @@ def get_retriever(k: int | None = None):
 
 
 def retrieve(query: str, k: int | None = None) -> List[Document]:
-    """Retrieve documents from Pinecone for a given query.
-
-    Args:
-        query: Search query string.
-        k: Number of documents to retrieve (defaults to config value).
-
-    Returns:
-        List of Document objects with metadata (including page numbers).
-    """
+    """Retrieve documents from Pinecone for a given query."""
     retriever = get_retriever(k=k)
     return retriever.invoke(query)
 
-def index_documents(file_path: Path) -> int:
-    """Index a list of Document objects into the Pinecone vector store.
+
+def index_documents(docs: List[Document]) -> int:
+    """
+    Index a list of already-loaded Document objects into Pinecone.
 
     Args:
-        docs: Documents to embed and upsert into the vector index.
+        docs: Documents produced by a loader (e.g., PyPDFLoader).
 
     Returns:
-        The number of documents indexed.
+        Number of document chunks indexed.
     """
-    loader = PyPDFLoader(str(file_path), mode="single")
-    docs = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=50,
+    )
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    texts = text_splitter.split_documents(docs)
+    chunks = text_splitter.split_documents(docs)
 
     vector_store = _get_vector_store()
-    vector_store.add_documents(texts)
-    return len(texts)
+    vector_store.add_documents(chunks)
+
+    return len(chunks)

@@ -1,6 +1,6 @@
 """LangGraph state schema for the multi-agent QA flow."""
 
-from typing import TypedDict
+from typing import List, TypedDict
 
 
 class QAState(TypedDict):
@@ -16,3 +16,7 @@ class QAState(TypedDict):
     context: str | None
     draft_answer: str | None
     answer: str | None
+
+    # --- NEW FIELDS FOR FEATURE 2 ---
+    retrieval_traces: str | None          # Human-readable log of all search attempts
+    raw_context_blocks: List[str] | None  # Individual context chunks from each call

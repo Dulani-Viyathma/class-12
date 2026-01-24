@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IKMS Multi-Agent RAG — Feature 2 Debug UI</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #0b1020;
+        --card: #111a33;
+        --muted: #aab3d0;
+        --text: #eaf0ff;
+        --accent: #7aa2ff;
+        --border: rgba(255,255,255,0.12);
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background: radial-gradient(1200px 700px at 20% -10%, #1a2b66 0%, rgba(26,43,102,0) 60%),
+                    radial-gradient(900px 600px at 110% 10%, #2b1a66 0%, rgba(43,26,102,0) 55%),
+                    var(--bg);
+        color: var(--text);
+      }
+      .container { max-width: 1100px; margin: 28px auto; padding: 0 16px; }
+      .header { display: flex; gap: 14px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+      .title { font-size: 22px; font-weight: 700; }
+      .subtitle { color: var(--muted); font-size: 13px; }
+      .grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 14px; margin-top: 14px; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+      }
+      label { color: var(--muted); font-size: 12px; }
+      textarea {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.25);
+        color: var(--text);
+        padding: 10px;
+      }
+      button {
+        margin-top: 8px;
+        border-radius: 12px;
+        padding: 10px;
+        background: var(--accent);
+        color: black;
+        font-weight: bold;
+        cursor: pointer;
+      }
+      pre {
+        background: rgba(0,0,0,0.25);
+        padding: 10px;
+        border-radius: 10px;
+        white-space: pre-wrap;
+      }
+      .muted { color: var(--muted); font-size: 12px; }
+      .error { color: #ffb4b4; }
+      .success { color: #b9ffd4; }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="header">
+        <div>
+          <div class="title">IKMS Multi-Agent RAG — Feature 2</div>
+          <div class="subtitle">Multi-call retrieval with full trace visibility</div>
+        </div>
+        <div class="pill"><span id="apiStatus">API: unknown</span></div>
+      </div>
+
+      <!-- PDF UPLOAD -->
+      <div class="card" style="margin-top: 14px;">
+        <label>Upload PDF</label>
+        <input type="file" id="pdfFile" accept=".pdf" />
+        <button id="uploadBtn">Upload PDF</button>
+        <div id="uploadStatus" class="muted"></div>
+      </div>
+
+      <div class="grid">
+        <!-- QUESTION -->
+        <div class="card">
+          <label>Question</label>
+          <textarea id="question" placeholder="Ask a question about your indexed PDFs..."></textarea>
+          <button id="askBtn">Ask</button>
+
+          <label>Answer</label>
+          <pre id="answer">(no answer yet)</pre>
+
+          <label>Organized Context</label>
+          <pre id="context">(no context yet)</pre>
+        </div>
+
+        <!-- DEBUG -->
+        <div class="card">
+          <label>Retrieval Traces</label>
+          <pre id="traces">(none)</pre>
+
+          <label>Raw Context Blocks</label>
+          <div id="rawBlocks">(none)</div>
+
+          <label>Draft Answer</label>
+          <pre id="draft">(none)</pre>
+
+          <div id="err" class="error"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= JS ================= -->
+    <script>
+      const el = (id) => document.getElementById(id);
+
+      function setStatus(text, ok) {
+        el("apiStatus").textContent = "API: " + text;
+        el("apiStatus").className = ok ? "success" : "error";
+      }
+
+      async function uploadPDF() {
+        const file = el("pdfFile").files[0];
+        const status = el("uploadStatus");
+
+        if (!file) {
+          status.textContent = "Please select a PDF file.";
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        status.textContent = "Uploading...";
+
+        try {
+          const res = await fetch("/index-pdf", {
+            method: "POST",
+            body: formData
+          });
+
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Upload failed");
+
+          status.textContent = `✅ Uploaded: ${data.filename} (Chunks: ${data.chunks_indexed})`;
+        } catch (e) {
+          status.textContent = "❌ " + e.message;
+        }
+      }
+
+      async function ask() {
+        el("answer").textContent = "Loading...";
+        el("context").textContent = "";
+        el("traces").textContent = "";
+        el("rawBlocks").innerHTML = "";
+        el("draft").textContent = "";
+        el("err").textContent = "";
+
+        try {
+          const res = await fetch("/qa", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question: el("question").value })
+          });
+
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Error");
+
+          el("answer").textContent = data.answer;
+          el("context").textContent = data.context;
+          el("traces").textContent = data.retrieval_traces;
+          el("draft").textContent = data.draft_answer || "";
+
+          (data.raw_context_blocks || []).forEach((b, i) => {
+            const d = document.createElement("details");
+            const s = document.createElement("summary");
+            s.textContent = "Retrieval Call " + (i + 1);
+            const p = document.createElement("pre");
+            p.textContent = b;
+            d.appendChild(s);
+            d.appendChild(p);
+            el("rawBlocks").appendChild(d);
+          });
+
+          setStatus("reachable", true);
+        } catch (e) {
+          el("err").textContent = e.message;
+          setStatus("error", false);
+        }
+      }
+
+      async function ping() {
+        try {
+          const res = await fetch("/openapi.json");
+          setStatus(res.ok ? "reachable" : "error", res.ok);
+        } catch {
+          setStatus("unreachable", false);
+        }
+      }
+
+      el("uploadBtn").addEventListener("click", uploadPDF);
+      el("askBtn").addEventListener("click", ask);
+      ping();
+    </script>
+  </body>
+</html>

@@ -13,33 +13,31 @@ class Settings(BaseSettings):
     # OpenAI Configuration
     openai_api_key: str
     openai_model_name: str = "gpt-4o-mini"
-    openai_embedding_model_name: str = "text-embedding-3-large"
+
+    # ✅ FIX: must match Pinecone index dimension (1536)
+    openai_embedding_model_name: str = "text-embedding-3-small"
 
     # Pinecone Configuration
     pinecone_api_key: str
     pinecone_index_name: str
+    pinecone_host: str
 
     # Retrieval Configuration
     retrieval_k: int = 4
 
+    # No .env file (use terminal env vars)
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
 
 
-# Create a singleton settings instance
+# Singleton settings instance
 _settings: Settings | None = None
 
 
 def get_settings() -> Settings:
-    """Get the application settings instance (singleton pattern).
-
-    Returns:
-        Settings instance with all configuration values loaded.
-    """
+    """Get the application settings instance (singleton pattern)."""
     global _settings
     if _settings is None:
         _settings = Settings()
